@@ -1,44 +1,49 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use nyquist_lib;
-use nyquist_lib::test;
+use nyquist_lib::{audio_thread, create_playlist, Track};
 
 #[tokio::main]
 async fn main() {
     let db = Arc::new(Mutex::new(HashMap::<String, String>::new()));
+    let playlist = create_playlist();
     println!("Hello, world!");
-    use std::io::{stdin,stdout,Write};
+
+    // Clone the Arc for the tokio task
+    let playlist_clone = Arc::clone(&playlist);
+    tokio::spawn(async move {
+        audio_thread(&playlist_clone).await;
+    });
+
+    use std::io::{stdin, stdout, Write};
     loop {
-        let mut s=String::new();
+        let mut input = String::new();
         print!("Please enter some text: ");
-        let _ =stdout().flush();
-        stdin().read_line(&mut s).expect("Did not enter a correct string");
-        if let Some('\n')=s.chars().next_back() {
-            s.pop();
+        let _ = stdout().flush();
+        stdin().read_line(&mut input).expect("Did not enter a correct string");
+
+        if let Some('\n') = input.chars().next_back() {
+            input.pop();
         }
-        if let Some('\r')=s.chars().next_back() {
-            s.pop();
-        }// Inside your loop, create a new Arc clone for each iteration
+        if let Some('\r') = input.chars().next_back() {
+            input.pop();
+        }
+
+        // Create a new Arc clone for each iteration
         let db_clone = Arc::clone(&db);
 
-        if s.starts_with("setdb") {
-            let mut db_add = s.replace("setdb ", "");
-            let mut guard = db_clone.lock().unwrap();
-            if guard.contains_key("test") {
-                *guard.get_mut("test").unwrap() = db_add;
-            } else {
-                guard.insert("test".to_string(), s.clone());
-            }
+        if input.starts_with("add") {
+            let playlist_add = input.replace("add ", "");
+            let track = Track { path: playlist_add };
+
+            let mut playlist_guard = playlist.lock().unwrap();
+            playlist_guard.queue.push(track.clone());
+            playlist_guard.playing = Some(track);
         }
 
-        if s.starts_with("play") {
-            let mut play = s.replace("play ", "");
+        if input.starts_with("play") {
+            let _play = input.replace("play ", "");
+            // Implementation for play (currently does nothing)
         }
-
-        // Spawn the async block using the cloned Arc
-        tokio::spawn(async move {
-            test("/run/media/kz-n/Extra/Musica/Fox Stevenson/Fox Stevenson & Curbi - Hoohah.flac".to_string(), &db_clone).await;
-        });
-
     }
 }

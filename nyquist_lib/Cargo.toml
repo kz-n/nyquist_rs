@@ -5,5 +5,5 @@ edition = "2021"
 
 [dependencies]
 kira = { version= "0.9.3", features = ["cpal"] }
-tokio = "1.38.0"
+tokio = { version = "1.38.0", features = ["time"] }
 bytes = "1"
