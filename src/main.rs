@@ -1,9 +1,11 @@
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use nyquist_lib;
 use nyquist_lib::test;
 
 #[tokio::main]
 async fn main() {
-
+    let db = Arc::new(Mutex::new(HashMap::<String, String>::new()));
     println!("Hello, world!");
     use std::io::{stdin,stdout,Write};
     loop {
@@ -16,10 +18,27 @@ async fn main() {
         }
         if let Some('\r')=s.chars().next_back() {
             s.pop();
+        }// Inside your loop, create a new Arc clone for each iteration
+        let db_clone = Arc::clone(&db);
+
+        if s.starts_with("setdb") {
+            let mut db_add = s.replace("setdb ", "");
+            let mut guard = db_clone.lock().unwrap();
+            if guard.contains_key("test") {
+                *guard.get_mut("test").unwrap() = db_add;
+            } else {
+                guard.insert("test".to_string(), s.clone());
+            }
         }
-        println!("You typed: {}",s);
+
+        if s.starts_with("play") {
+            let mut play = s.replace("play ", "");
+        }
+
+        // Spawn the async block using the cloned Arc
         tokio::spawn(async move {
-            test(s.clone()).await;
+            test("/run/media/kz-n/Extra/Musica/Fox Stevenson/Fox Stevenson & Curbi - Hoohah.flac".to_string(), &db_clone).await;
         });
+
     }
 }

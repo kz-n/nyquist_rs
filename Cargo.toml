@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 nyquist_lib = { path="nyquist_lib/"}
 tokio = { version = "1.38.0", features = ["rt", "rt-multi-thread", "macros"] }
+bytes = "1"
