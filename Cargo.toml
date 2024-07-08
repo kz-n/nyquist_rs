@@ -5,5 +5,10 @@ edition = "2021"
 
 [dependencies]
 nyquist_lib = { path="nyquist_lib/"}
-tokio = { version = "1.38.0", features = ["rt", "rt-multi-thread", "macros"] }
+tokio = { version = "1.38.0", features = ["rt", "rt-multi-thread", "macros", "sync", "tracing"] }
 bytes = "1"
+time = "0.3.36"
+console-subscriber = "0.3.0"
+
+[build]
+rustflags = ["--cfg", "tokio_unstable"]

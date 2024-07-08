@@ -7,3 +7,6 @@ edition = "2021"
 kira = { version= "0.9.3", features = ["cpal"] }
 tokio = { version = "1.38.0", features = ["time"] }
 bytes = "1"
+console-subscriber = "0.3.0"
+[build]
+rustflags = ["--cfg", "tokio_unstable"]
