@@ -1,0 +1,8 @@
+[package]
+name = "nyquist_lib"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+kira = { version= "0.9.3", features = ["cpal"] }
+tokio = "1.38.0"
