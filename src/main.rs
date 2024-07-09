@@ -1,67 +1,53 @@
+use nyquist_lib::Track;
+use nyquist_lib::{audio_thread, create_playlist};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
-use tokio::{task, time}; // 1.3.0
-use nyquist_lib;
-use nyquist_lib::{audio_thread, create_playlist, Message, Track};
+use std::sync::Arc;
+use tokio::{select, task};
 use tokio::sync::mpsc;
-use console_subscriber;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use nyquist_lib::Message;
+// Your library crate name
+
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 async fn main() {
-    console_subscriber::init();
-    let db = Arc::new(Mutex::new(HashMap::<String, String>::new()));
+    let db = Arc::new(tokio::sync::Mutex::new(HashMap::<String, String>::new()));
     let playlist = create_playlist();
-    let (tx, mut rx) = mpsc::channel::<Message>(32);
+    let (tx, rx) = mpsc::channel::<Message>(32);
     println!("Hello, world!");
 
-    // Clone the Arc for the tokio task
     let playlist_clone = Arc::clone(&playlist);
-    tokio::spawn(async move {
-        audio_thread(&playlist_clone, rx).await;
-    });
-    use std::io::{stdin, stdout, Write};
+    tokio::spawn(audio_thread(playlist_clone, rx));
+
+    let mut stdin = BufReader::new(tokio::io::stdin()).lines();
+
     loop {
-        tokio::task::yield_now().await;
-        let mut input = String::new();
-        print!("Please enter some text: ");
-        let _ = stdout().flush();
-        stdin().read_line(&mut input).expect("Did not enter a correct string");
+        select! {
+            Ok(Some(input)) = stdin.next_line() => {
+                let input = input.trim();
+                let db_clone = Arc::clone(&db);
 
-        if let Some('\n') = input.chars().next_back() {
-            input.pop();
-        }
-        if let Some('\r') = input.chars().next_back() {
-            input.pop();
-        }
+                if input.starts_with("add") {
+                    let playlist_add = input.replace("add ", "");
+                    let track = Track { path: playlist_add };
 
-        // Create a new Arc clone for each iteration
-        let db_clone = Arc::clone(&db);
-
-        if input.starts_with("add") {
-            let playlist_add = input.replace("add ", "");
-            let track = Track { path: playlist_add };
-
-            let mut playlist_guard = playlist.lock().unwrap();
-            playlist_guard.queue.push(track.clone());
-            playlist_guard.playing = Some(track);
-        }
-
-        if input.starts_with("play") {
-            let _play = input.replace("play ", "");
-            // Implementation for play (currently does nothing)
-        }
-
-        if input.starts_with("list") {
-            let mut playlist_guard = playlist.lock().unwrap();
-            println!("{:#?}", playlist_guard.queue)
-        }
-
-        if input.starts_with("pause") {
-            tx.send(Message::PlaybackPause).await.unwrap();
-        }
-
-        if input.starts_with("resume") {
-            tx.send(Message::PlaybackResume).await.unwrap();
+                    let mut playlist_guard = playlist.lock().await;
+                    playlist_guard.queue.push(track.clone());
+                    playlist_guard.playing = Some(track);
+                } else if input.starts_with("play") {
+                    let _play = input.replace("play ", "");
+                    // Implementation for play (currently does nothing)
+                } else if input.starts_with("list") {
+                    let playlist_guard = playlist.lock().await;
+                    println!("{:#?}", playlist_guard.queue);
+                } else if input.starts_with("pause") {
+                    tx.send(Message::PlaybackPause).await.unwrap();
+                } else if input.starts_with("resume") {
+                    tx.send(Message::PlaybackResume).await.unwrap();
+                }
+            }
+            else => {
+                break;
+            }
         }
     }
 }
