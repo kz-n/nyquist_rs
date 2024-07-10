@@ -6,7 +6,6 @@ use tokio::{select, task};
 use tokio::sync::mpsc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use nyquist_lib::Message;
-// Your library crate name
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 async fn main() {
@@ -46,10 +45,14 @@ async fn main() {
                 } else if input.starts_with("vol") {
                     let vol = input.replace("vol ", "").parse::<i32>().unwrap();
                     tx.send((Message::EffectVolume, MessageValue::float(vol as f64 / 100.0))).await.unwrap();
+                } else if input.starts_with("time") {
+                    let playlist_guard = playlist.lock().await;
+                    println!("{:?} {:?}" ,playlist_guard.current_duration, playlist_guard.current_time)
                 }
             }
             else => {
-                break;
+                // yield execution to allow other tasks to run
+                tokio::task::yield_now().await;
             }
         }
     }
