@@ -75,19 +75,6 @@ pub fn create_playlist() -> Arc<Mutex<Playlist>> {
     Arc::new(Mutex::new(Playlist { queue: vec![], playing: None, paused: false }))
 }
 
-// Function to test playing an audio file (not directly relevant to playback control example)
-pub async fn test(path: String, db: &Arc<Mutex<HashMap<String, String>>>) {
-    let mut manager = AudioManager::<DefaultBackend>::new(AudioManagerSettings::default()).unwrap();
-    let track = manager.add_sub_track(TrackBuilder::default()).unwrap();
-    let sound_data = StreamingSoundData::from_file(path).unwrap().output_destination(&track);
-    manager.play(sound_data).unwrap();
-
-    loop {
-        let db = db.lock().await;
-        println!("{:#?}", db.get("test").unwrap());
-    }
-}
-
 // Main audio thread that listens for messages and controls playback
 pub async fn audio_thread(playlist: Arc<Mutex<Playlist>>, mut rx: Receiver<(Message, MessageValue)>) {
     let mut manager = AudioManager::<DefaultBackend>::new(AudioManagerSettings::default()).unwrap();
