@@ -9,7 +9,6 @@ use nyquist_lib::Message;
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 async fn main() {
-    let db = Arc::new(tokio::sync::Mutex::new(HashMap::<String, String>::new()));
     let playlist = create_playlist();
     let (tx, rx) = mpsc::channel::<(Message, MessageValue)>(32);
     println!("Hello, world!");
@@ -23,7 +22,6 @@ async fn main() {
         select! {
             Ok(Some(input)) = stdin.next_line() => {
                 let input = input.trim();
-                let db_clone = Arc::clone(&db);
 
                 if input.starts_with("add") {
                     let playlist_add = input.replace("add ", "");

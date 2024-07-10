@@ -2,17 +2,12 @@ use kira::manager::{AudioManager, AudioManagerSettings, backend::DefaultBackend}
 use kira::sound::streaming::{StreamingSoundData, StreamingSoundHandle};
 use kira::track::TrackBuilder;
 
-use bytes::Bytes;
-use std::collections::HashMap;
 use tokio::sync::{Mutex, mpsc::Receiver};
 use std::sync::Arc;
 use std::time::Duration;
 use kira::sound::FromFileError;
 use kira::sound::PlaybackState::{Paused, Playing};
 use kira::tween::Tween;
-
-// Mutex-wrapped database type alias
-pub type Db = Arc<Mutex<HashMap<String, Bytes>>>;
 
 // Track structure representing a single audio track
 #[derive(Clone, Debug)]
@@ -134,21 +129,11 @@ pub async fn audio_thread(
                     }
                 }
             }
-            // This block checks for new tracks to play if none are currently playing/paused
+
             _ =
-                // async {
-                //     loop {
-                //         if let Some(mut handle) = current_sound_handle.as_mut() {
-                //             let mut playlist_guard = playlist.lock().await;
-                //             println!("Test123");
-                //             playlist_guard.current_time = Duration::from_secs_f64(handle.position());
-                //         }
-                //         tokio::task::yield_now().await
-                //     }
-                //
-                // }
                 tokio::task::yield_now()
             , if true => {
+                // This block checks for new tracks to play if none are currently playing/paused
                 if current_sound_handle.is_none() {
                     let mut playlist_guard = playlist.lock().await;
                     // Check if there is a track to play
@@ -164,6 +149,7 @@ pub async fn audio_thread(
                             }
                         }
                     }
+                // Updates current time
                 } else {
                     if let Some(mut handle) = current_sound_handle.as_mut() {
                             let mut playlist_guard = playlist.lock().await;
