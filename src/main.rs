@@ -1,4 +1,4 @@
-use nyquist_lib::Track;
+use nyquist_lib::{MessageValue, Track};
 use nyquist_lib::{audio_thread, create_playlist};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,7 +12,7 @@ use nyquist_lib::Message;
 async fn main() {
     let db = Arc::new(tokio::sync::Mutex::new(HashMap::<String, String>::new()));
     let playlist = create_playlist();
-    let (tx, rx) = mpsc::channel::<Message>(32);
+    let (tx, rx) = mpsc::channel::<(Message, MessageValue)>(32);
     println!("Hello, world!");
 
     let playlist_clone = Arc::clone(&playlist);
@@ -40,9 +40,12 @@ async fn main() {
                     let playlist_guard = playlist.lock().await;
                     println!("{:#?}", playlist_guard.queue);
                 } else if input.starts_with("pause") {
-                    tx.send(Message::PlaybackPause).await.unwrap();
+                    tx.send((Message::PlaybackPause, MessageValue::none())).await.unwrap();
                 } else if input.starts_with("resume") {
-                    tx.send(Message::PlaybackResume).await.unwrap();
+                    tx.send((Message::PlaybackResume, MessageValue::none())).await.unwrap();
+                } else if input.starts_with("vol") {
+                    let vol = input.replace("vol ", "").parse::<i32>().unwrap();
+                    tx.send((Message::EffectVolume, MessageValue::float(vol as f64 / 100.0))).await.unwrap();
                 }
             }
             else => {

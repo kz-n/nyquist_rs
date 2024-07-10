@@ -1,5 +1,5 @@
 use kira::manager::{AudioManager, AudioManagerSettings, backend::DefaultBackend};
-use kira::sound::streaming::StreamingSoundData;
+use kira::sound::streaming::{StreamingSoundData, StreamingSoundHandle};
 use kira::track::TrackBuilder;
 
 use bytes::Bytes;
@@ -7,13 +7,14 @@ use std::collections::HashMap;
 use tokio::sync::{Mutex, mpsc::Receiver};
 use std::sync::Arc;
 use std::time::Duration;
+use kira::sound::FromFileError;
 use kira::sound::PlaybackState::{Paused, Playing};
 use kira::tween::Tween;
 
-// Mutex stuff
+// Mutex-wrapped database type alias
 pub type Db = Arc<Mutex<HashMap<String, Bytes>>>;
 
-// Track and Playlist
+// Track structure representing a single audio track
 #[derive(Clone, Debug)]
 pub struct Track {
     pub path: String,
@@ -25,6 +26,35 @@ pub enum Message {
     PlaylistUpdated,
     PlaybackPause,
     PlaybackResume,
+    EffectVolume,
+}
+
+#[derive(Clone, Debug)]
+pub struct MessageValue {
+    pub float: Option<f64>,
+    pub int: Option<i32>,
+    pub string: Option<String>,
+}
+impl MessageValue {
+    pub fn none() -> MessageValue {
+        Self {
+            float: None,
+            int: None,
+            string: None,
+        }
+    }
+
+    pub fn float(float: f64) -> Self {
+        Self { float: Some(float), int: (None), string: (None) }
+    }
+
+    pub fn int(int: Option<i32>) -> Self {
+        Self { float: (None), int, string: (None) }
+    }
+
+    pub fn string(string: Option<String>) -> Self {
+        Self { float: (None), int: (None), string }
+    }
 }
 
 impl Track {
@@ -33,6 +63,7 @@ impl Track {
     }
 }
 
+// Playlist structure maintaining the queue of tracks and playback state
 pub struct Playlist {
     pub queue: Vec<Track>,
     pub playing: Option<Track>,
@@ -44,6 +75,7 @@ pub fn create_playlist() -> Arc<Mutex<Playlist>> {
     Arc::new(Mutex::new(Playlist { queue: vec![], playing: None, paused: false }))
 }
 
+// Function to test playing an audio file (not directly relevant to playback control example)
 pub async fn test(path: String, db: &Arc<Mutex<HashMap<String, String>>>) {
     let mut manager = AudioManager::<DefaultBackend>::new(AudioManagerSettings::default()).unwrap();
     let track = manager.add_sub_track(TrackBuilder::default()).unwrap();
@@ -52,68 +84,79 @@ pub async fn test(path: String, db: &Arc<Mutex<HashMap<String, String>>>) {
 
     loop {
         let db = db.lock().await;
-        print!("{:#?}", db.get("test").unwrap());
+        println!("{:#?}", db.get("test").unwrap());
     }
 }
 
-pub async fn audio_thread(playlist: Arc<Mutex<Playlist>>, mut rx: Receiver<Message>) {
-    let arc_message: Arc<Mutex<Option<Message>>> = Arc::new(Mutex::new(None));
-    let arc_message_clone = arc_message.clone();
-    tokio::spawn(async move {
-        while let Some(m) = rx.recv().await {
-            *arc_message_clone.lock().await = Some(m);
-            println!("{:?}", arc_message_clone.lock().await);
-        }
-    });
+// Main audio thread that listens for messages and controls playback
+pub async fn audio_thread(playlist: Arc<Mutex<Playlist>>, mut rx: Receiver<(Message, MessageValue)>) {
     let mut manager = AudioManager::<DefaultBackend>::new(AudioManagerSettings::default()).unwrap();
     let kira_track = manager.add_sub_track(TrackBuilder::default()).unwrap();
+    let mut current_sound_handle: Option<StreamingSoundHandle<FromFileError>> = None; // Optional sound handle for the current playing sound
+
     loop {
-        tokio::task::yield_now().await;
-
-        let option = arc_message.lock().await.clone();
-        let message = option.unwrap_or(Message::None);
-        let mut playlist_guard = playlist.lock().await;
-        if let Some(playing) = &playlist_guard.playing {
-            {
-                println!("sexo");
-                let nyq_track = playing.clone();
-                let sound_data = StreamingSoundData::from_file(nyq_track.path).unwrap().output_destination(&kira_track);
-                let mut sound_handle = manager.play(sound_data).unwrap();
-                sound_handle.pause(Tween {
-                    start_time: Default::default(),
-                    duration: Duration::from_millis(0),
-                    easing: Default::default(),
-                });
-                if !playlist_guard.paused {
-                    println!("asd");
-                    sound_handle.resume(Default::default());
-                }
-                while sound_handle.state() == Playing || sound_handle.state() == Paused {
-                    tokio::task::yield_now().await;
-
-                    let option = arc_message.lock().await.clone();
-                    if let Some(message) = option {
-                        match message {
-                            Message::PlaybackPause => {
-                                if sound_handle.state() == Playing {
-                                    sound_handle.pause(Default::default());
+        tokio::select! {
+            // Handle incoming messages
+            msg = rx.recv() => {
+                if let Some(message) = msg {
+                    match message.0 {
+                        Message::PlaybackPause => {
+                            // Pause the current sound if it's playing
+                            if let Some(mut handle) = current_sound_handle.take() {
+                                if handle.state() == Playing {
+                                    handle.pause(Tween::default());
                                     println!("Playback paused");
+                                    let mut playlist_guard = playlist.lock().await;
                                     playlist_guard.paused = true;
+                                    current_sound_handle = Some(handle);
                                 }
                             }
-                            Message::PlaybackResume => {
-                                if sound_handle.state() == Paused {
-                                    sound_handle.resume(Default::default());
-                                    println!("Playback resumed");
-                                    playlist_guard.paused = false;
-                                }
-                            }
-                            _ => {}
                         }
-                        // Clear the message after handling
-                        *arc_message.lock().await = None;
+                        Message::PlaybackResume => {
+                            // Resume the current sound if it's paused
+                            if let Some(mut handle) = current_sound_handle.take() {
+                                if handle.state() == Paused {
+                                    handle.resume(Tween::default());
+                                    println!("Playback resumed");
+                                    let mut playlist_guard = playlist.lock().await;
+                                    playlist_guard.paused = false;
+                                    current_sound_handle = Some(handle);
+                                }
+                            }
+                        }
+                        Message::EffectVolume => {
+                            if let Some(mut handle) = current_sound_handle.take() {
+                                handle.set_volume(message.1.float.unwrap(), Default::default());
+                                current_sound_handle = Some(handle);
+                            }
+                        }
+                        _ => {}
                     }
                 }
+            }
+            // Conditional block that runs if no sound is currently playing/paused
+            _ = tokio::task::yield_now(), if current_sound_handle.is_none() => {
+                let mut playlist_guard = playlist.lock().await;
+                // Check if there is a track to play
+                if let Some(playing) = &playlist_guard.playing {
+                    let sound_data = StreamingSoundData::from_file(&playing.path).unwrap().output_destination(&kira_track);
+                    current_sound_handle = Some(manager.play(sound_data).unwrap());
+                    // Pause the sound immediately if the playlist is in a paused state
+                    if playlist_guard.paused {
+                        if let Some(mut handle) = current_sound_handle.take() {
+                            handle.pause(Tween::default());
+                            current_sound_handle = Some(handle);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check the state of the current sound handle and yield if it's playing/paused
+        if let Some(mut handle) = current_sound_handle.take() {
+            if handle.state() == Playing || handle.state() == Paused {
+                tokio::task::yield_now().await;
+                current_sound_handle = Some(handle); // Reassign the handle back
             }
         }
     }
