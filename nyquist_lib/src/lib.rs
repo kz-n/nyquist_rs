@@ -1,13 +1,90 @@
-use kira::manager::{AudioManager, AudioManagerSettings, backend::DefaultBackend};
+use kira::manager::{backend::DefaultBackend, AudioManager, AudioManagerSettings};
 use kira::sound::streaming::{StreamingSoundData, StreamingSoundHandle};
 use kira::track::TrackBuilder;
 
-use tokio::sync::{Mutex, mpsc::Receiver};
-use std::sync::Arc;
-use std::time::Duration;
 use kira::sound::FromFileError;
 use kira::sound::PlaybackState::{Paused, Playing};
 use kira::tween::Tween;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::mpsc::Sender;
+use tokio::sync::{mpsc, mpsc::Receiver, Mutex};
+
+// Message Passer (useful to Nyquist struct)
+struct MessagePasser {
+    tx: Sender<(Message, MessageValue)>,
+}
+impl MessagePasser {
+    pub fn new(tx: Sender<(Message, MessageValue)>) -> Self {
+        //, rx: Receiver<(Message, MessageValue)>
+        Self { tx } //, rx
+    }
+}
+
+// Lib entry point, this object has to stay alive for the lib to function
+pub struct Nyquist {
+    pub playlist: Arc<Mutex<Playlist>>,
+    message_passer: MessagePasser,
+}
+
+impl Nyquist {
+    pub fn new() -> Self {
+        let (tx, rx) = mpsc::channel::<(Message, MessageValue)>(32);
+        let playlist = create_playlist();
+
+        // Correctly set playlist_clone
+        let playlist_clone = Arc::clone(&playlist);
+        tokio::spawn(audio_thread(playlist_clone, rx));
+
+        // Set to used Arc<Mutex<Playlist>> correctly
+        Self {
+            playlist: playlist,
+            message_passer: MessagePasser { tx },
+        }
+    }
+
+    pub async fn add_to_playlist(&self, track: Track) {
+        let mut playlist_guard = &mut self.playlist.lock().await;
+        playlist_guard.queue.push(track.clone());
+        playlist_guard.playing = Some(track);
+        println!("bazinga")
+    }
+
+    pub async fn list(&self) -> Vec<Track> {
+        let playlist_guard = &self.playlist.lock().await;
+        return playlist_guard.queue.clone();
+    }
+
+    pub async fn pause_playback(&self) {
+        &self
+            .message_passer
+            .tx
+            .send((Message::PlaybackPause, MessageValue::none()))
+            .await
+            .unwrap();
+    }
+
+    pub async fn resume_playback(&self) {
+        &self
+            .message_passer
+            .tx
+            .send((Message::PlaybackResume, MessageValue::none()))
+            .await
+            .unwrap();
+    }
+
+    pub async fn get_time(&self) -> (Duration, Duration) {
+        let playlist_guard = &self.playlist.lock().await;
+        return (playlist_guard.current_duration, playlist_guard.current_time);
+    }
+    pub async fn get_vol(&self) -> f64 {
+        return self.playlist.lock().await.current_volume;
+    }
+
+    pub async fn set_vol(&self, vol: f64) {
+        self.playlist.lock().await.current_volume = vol;
+    }
+}
 
 // Track structure representing a single audio track
 #[derive(Clone, Debug)]
@@ -41,15 +118,27 @@ impl MessageValue {
     }
 
     pub fn float(float: f64) -> Self {
-        Self { float: Some(float), int: (None), string: (None) }
+        Self {
+            float: Some(float),
+            int: (None),
+            string: (None),
+        }
     }
 
     pub fn int(int: Option<i32>) -> Self {
-        Self { float: (None), int, string: (None) }
+        Self {
+            float: (None),
+            int,
+            string: (None),
+        }
     }
 
     pub fn string(string: Option<String>) -> Self {
-        Self { float: (None), int: (None), string }
+        Self {
+            float: (None),
+            int: (None),
+            string,
+        }
     }
 }
 
@@ -66,6 +155,7 @@ pub struct Playlist {
     pub paused: bool,
     pub current_duration: Duration,
     pub current_time: Duration,
+    pub current_volume: f64,
 }
 
 // Creates the playlist for use in the program
@@ -76,6 +166,7 @@ pub fn create_playlist() -> Arc<Mutex<Playlist>> {
         paused: false,
         current_duration: Default::default(),
         current_time: Default::default(),
+        current_volume: 100.0,
     }))
 }
 
@@ -84,8 +175,7 @@ pub async fn audio_thread(
     playlist: Arc<Mutex<Playlist>>,
     mut rx: Receiver<(Message, MessageValue)>,
 ) {
-    let mut manager =
-        AudioManager::<DefaultBackend>::new(AudioManagerSettings::default()).unwrap();
+    let mut manager = AudioManager::<DefaultBackend>::new(AudioManagerSettings::default()).unwrap();
     let kira_track = manager.add_sub_track(TrackBuilder::default()).unwrap();
     let mut current_sound_handle: Option<StreamingSoundHandle<FromFileError>> = None; // Optional sound handle for the current playing sound
 
@@ -121,7 +211,9 @@ pub async fn audio_thread(
                         }
                         Message::EffectVolume => {
                             if let Some(mut handle) = current_sound_handle.take() {
-                                handle.set_volume(message.1.float.unwrap(), Default::default());
+                                let mut playlist_guard = playlist.lock().await;
+                                playlist_guard.current_volume = message.1.float.unwrap();
+                                handle.set_volume(playlist_guard.current_volume, Default::default());
                                 current_sound_handle = Some(handle);
                             }
                         }
@@ -161,7 +253,6 @@ pub async fn audio_thread(
         }
 
         // Update the current playback time for the track (runs every loop iteration)
-
 
         // Yield execution to avoid blocking
         //tokio::task::yield_now().await;
